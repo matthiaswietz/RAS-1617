@@ -5,4 +5,4 @@ This repo describes the amplicon-seq workflow in Wietz et al. (doi: XXX). Microb
 ## Contents
 Rmarkdowns describing primer clipping (using cutadapt) and ASV classification (using DADA2) for [bacteria](./cutadapt_dada) and [eukaryotes](./cutadapt_dada)  
 [Resulting ASV and taxonomy tables](./cutadapt_dada)   
-[Rscripts and metadata](./analysis_code)  to reproduce all subsequent analyses and figures
+[Rscripts and metadata](./analysisCode)  to reproduce all subsequent analyses and figures
