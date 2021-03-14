@@ -1,1 +1,1 @@
-This folder contains cutadapt and DADA2 workflows and output files.
+This folder contains cutadapt / DADA2 workflows and output files.
