@@ -1,1 +1,1 @@
-This directory contains Rmarkdowns describing the primer clipping & DADA2 processing of raw fastq files.
+This directory contains Rmarkdowns describing primer clipping & DADA2 of raw fastq files, and the resulting output files.
