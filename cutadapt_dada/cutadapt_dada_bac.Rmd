@@ -1,0 +1,598 @@
+---
+title: "FRAM Observatory -- RAS 2016-17 -- Processing of 16S rRNA amplicon sequences"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This markdown describes the processing of bacterial+archaeal amplicon sequences from an  annual cycle in the Arctic Ocean. Samples were collected between July 2016 and July 2017 using Remote Access Samplers in the framework of the FRAM LTER in Fram Strait (https://www.awi.de/en/expedition/observatories/ocean-fram.html). Raw fastq files are available under ENA accession PRJEB43890. DNA was sequenced in two independent Illumina runs. Table S1 shows detailed accession information for fastqs, which MiSeq run they originate from, and all metadata.
+
+First we remove primers using *Cutadapt*  
+
+```{console}
+
+#######################################################################
+## FILE PREPARATION ##
+#######################################################################
+
+# Fastq files are copied into individual folders according to their MiSeq run origin. These will be processed individually according to DADA2 recommendations.
+
+# create corresponding folders in your working directory
+
+# This workflow ran on the *aphros* server of the AWI
+# For your own system, primer clipping needs to be adjusted
+
+#######################################################################
+
+## PRIMER CLIPPING -- MiSeq Run BLWBG ##
+
+FILELOCATION="~/bacteria/BLWBG" 
+NSAMPLE="94" #number of samples
+module load anaconda2 java 
+
+cd ~/bacteria
+cd BLWBG 
+mkdir Original
+mv *.fastq ./Original/
+
+# rename and copy original files to new file names
+mkdir Renamed
+ls -1v ./Original/*R1_001.fastq > ./Renamed/originalR1  #save original file names
+ls -1v ./Original/*R2_001.fastq > ./Renamed/originalR2
+
+new=1  
+for i in $(ls -1v ./Original/*R1_001.fastq)   
+do
+cp ${i} ./Renamed/${new}"_R1.fastq"
+((new++))
+done
+
+new=1
+for i in $(ls -1v ./Original/*R2_001.fastq)
+do
+cp ${i} ./Renamed/${new}"_R2.fastq"
+((new++))
+done  
+
+ls -1v ./Renamed/[0-9]*_R1.fastq > ./Renamed/renamedR1
+ls -1v ./Renamed/[0-9]*_R2.fastq > ./Renamed/renamedR2
+paste ./Renamed/originalR1 ./Renamed/renamedR1 > ./Renamed/fileID_R1
+paste ./Renamed/originalR2 ./Renamed/renamedR2 > ./Renamed/fileID_R2
+
+# Primer clipping 
+mkdir Logfiles
+mkdir Clipped
+CLIP_qsub="/clipping_aphros.sh"
+
+# Input primer sequences, ^ anchors to line start 
+# bacterial primer V4-V5  515F-926R >> amplicon length 410
+FBC=^GTGYCAGCMGCCGCGGTAA 
+RBC=^CCGYCAATTYMTTTRAGTTT 
+OFWD=18 # length FWD (19) - 1
+OREV=19 # length REV (20) - 1
+ERROR=0.16 # allowed %mismatches with primer sequences
+
+qsub -d ${FILELOCATION} -t 1-${NSAMPLE} -o ${FILELOCATION}/Logfiles -e ${FILELOCATION}/Logfiles -v FBC=${FBC},RBC=${RBC},OFWD=${OFWD},OREV=${OREV},ERROR=${ERROR} ${CLIP_qsub}
+
+# Write sample.names for DADA
+cd ./Clipped
+ls -1 *_R1.fastq | sed 's/_R1\.fastq//' > ../sample_names.txt
+cd ..
+
+# cleaning up directories
+mkdir ./Clipped/Clipped_logs
+mv ./Clipped/*.log ./Clipped/Clipped_logs/
+mv ./Clipped/*.info ./Clipped/Clipped_logs/
+  
+#######################################################################
+
+## PRIMER CLIPPING -- MiSeq Run BLVR5 ##
+
+FILELOCATION="~/bacteria/BLVR5" 
+NSAMPLE="94" #number of samples
+module load anaconda2 java
+
+cd BLVR5 
+mkdir Original
+mv *.fastq ./Original/
+  
+#rename and copy original files to new file names
+mkdir Renamed
+ls -1v ./Original/*R1_001.fastq > ./Renamed/originalR1  #save original file names
+ls -1v ./Original/*R2_001.fastq > ./Renamed/originalR2
+
+new=1  
+for i in $(ls -1v ./Original/*R1_001.fastq)   
+do
+cp ${i} ./Renamed/${new}"_R1.fastq"
+((new++))
+done
+
+new=1
+for i in $(ls -1v ./Original/*R2_001.fastq)
+do
+cp ${i} ./Renamed/${new}"_R2.fastq"
+((new++))
+done  
+
+ls -1v ./Renamed/[0-9]*_R1.fastq > ./Renamed/renamedR1
+ls -1v ./Renamed/[0-9]*_R2.fastq > ./Renamed/renamedR2
+paste ./Renamed/originalR1 ./Renamed/renamedR1 > ./Renamed/fileID_R1
+paste ./Renamed/originalR2 ./Renamed/renamedR2 > ./Renamed/fileID_R2
+
+# Primer clipping 
+mkdir Logfiles
+mkdir Clipped
+CLIP_qsub="/clipping_aphros.sh"
+
+# Input primer sequences, use ^ to anchor to the beginning of line
+# bacterial primer 515F-926R (v4-v5)
+FBC=^GTGYCAGCMGCCGCGGTAA # forward primer
+RBC=^CCGYCAATTYMTTTRAGTTT # reverse primer
+OFWD=18 # length of forward primer (19) - 1
+OREV=19 # length of reverse primer (20) - 1
+ERROR=0.16 # allowed %mismatches with primer sequences
+
+qsub -d ${FILELOCATION} -t 1-${NSAMPLE} -o ${FILELOCATION}/Logfiles -e ${FILELOCATION}/Logfiles -v FBC=${FBC},RBC=${RBC},OFWD=${OFWD},OREV=${OREV},ERROR=${ERROR} ${CLIP_qsub}
+
+# Write sample.names for DADA
+ls -1 *_R1.fastq | sed 's/_R1\.fastq//' > ../sample_names.txt
+cd ..
+
+# cleaning up directories
+mkdir ./Clipped/Clipped_logs
+mv ./Clipped/*.log ./Clipped/Clipped_logs/
+mv ./Clipped/*.info ./Clipped/Clipped_logs/
+
+#######################################################################
+
+# start screen session
+screen -S dada
+
+# start R 
+module load R/3.5.2 
+R
+
+```
+
+*Now we go into DADA mode!*
+
+```{r, eval = F}
+
+require(dada2)
+require(ShortRead)
+require(ggplot2)
+require(gridExtra)
+
+##########################################
+
+## MiSeq run BLWBG ##
+
+# setwd 
+setwd("~/bacteria/BLWBG")
+
+# list files
+path <- "~/bacteria/BLWBG/Clipped/"
+fns <- list.files(path)
+fns
+
+# ensure fwd/rev reads  in same order
+fnFs_BLWBG <- sort(list.files(path, pattern="_R1.fastq"))
+fnRs_BLWBG <- sort(list.files(path, pattern="_R2.fastq"))
+
+# Define sample names
+sample.names <- sort(read.table(
+  "sample_names.txt", 
+  h = F, stringsAsFactors = F)$V1)
+
+# Specify the full path to the fnFs and fnRs
+fnFs_BLWBG <- file.path(path, fnFs_BLWBG)
+fnRs_BLWBG <- file.path(path, fnRs_BLWBG)
+
+#################################
+
+# Quality check
+QualityProfileFs_BLWBG <- list()
+for(i in 1:length(fnFs_BLWBG)) {QualityProfileFs_BLWBG[[i]] <- list()
+  QualityProfileFs_BLWBG[[i]][[1]] <- plotQualityProfile(fnFs_BLWBG[i])}
+pdf("QualityProfileForward_BLWBG.pdf")
+for(i in 1:length(fnFs_BLWBG)) {do.call("grid.arrange", 
+    QualityProfileFs_BLWBG[[i]])}
+dev.off()
+rm(QualityProfileFs_BLWBG)
+
+QualityProfileRs_BLWBG <- list()
+for(i in 1:length(fnRs_BLWBG)) {
+  QualityProfileRs_BLWBG[[i]] <- list()
+  QualityProfileRs_BLWBG[[i]][[1]] <- plotQualityProfile(
+    fnRs_BLWBG[i])}
+pdf("QualityProfileReverse_BLWBG.pdf")
+for(i in 1:length(fnRs_BLWBG)) {do.call("grid.arrange", 
+  QualityProfileRs_BLWBG[[i]])}
+dev.off()
+rm(QualityProfileRs_BLWBG)
+
+# Make directory and filenames for the filtered fastqs
+filt_path_BLWBG <- file.path(path, "../Filtered")
+if(!file_test("-d", filt_path_BLWBG)) dir.create(filt_path_BLWBG)
+filtFs_BLWBG <- file.path(
+  filt_path_BLWBG, paste0(sample.names, "_F_filt.fastq"))
+filtRs_BLWBG <- file.path(
+  filt_path_BLWBG, paste0(sample.names, "_R_filt.fastq"))
+
+#################################
+
+# Filter: depending on expected overlap
+# calculate expected error rates: # sum(10^(-x/10))  #x: QC of each read
+# truncLen  lowered based on QualityProfile (low quality esp. of rev-reads)
+out_BLWBG <- filterAndTrim(
+  fnFs_BLWBG, 
+  filtFs_BLWBG, 
+  fnRs_BLWBG, 
+  filtRs_BLWBG,
+  truncLen = c(230, 195),
+  maxN = 0,
+  minQ = 2,
+  maxEE = c(3, 3), 
+  truncQ = 0, 
+  rm.phix = TRUE,
+  compress = F,
+  multithread = 6)
+head(out_BLWBG)
+summary(out_BLWBG[, 2]/out_BLWBG[, 1])
+# should be retaining >70% (0.7) OK here!
+
+#################################
+
+# Quality check 
+QualityProfileFs_BLWBG.filt <- list()
+for(i in 1:length(filtFs_BLWBG)) {
+  QualityProfileFs_BLWBG.filt[[i]] <- list()
+  QualityProfileFs_BLWBG.filt[[i]][[1]] <- plotQualityProfile(
+    filtFs_BLWBG[i])}
+pdf("QualityProfileForwardFiltered_BLWBG.pdf")
+for(i in 1:length(filtFs_BLWBG)) {do.call("grid.arrange", 
+    QualityProfileFs_BLWBG.filt[[i]])}
+dev.off()
+rm(QualityProfileFs_BLWBG.filt)
+
+QualityProfileRs_BLWBG.filt <- list()
+for(i in 1:length(filtRs_BLWBG)) {
+  QualityProfileRs_BLWBG.filt[[i]] <- list()
+  QualityProfileRs_BLWBG.filt[[i]][[1]] <- plotQualityProfile(
+    filtRs_BLWBG[i])}
+pdf("QualityProfileReverseFiltered_BLWBG.pdf")
+for(i in 1:length(filtRs_BLWBG)) {  do.call("grid.arrange", 
+    QualityProfileRs_BLWBG.filt[[i]])}
+dev.off()
+rm(QualityProfileRs_BLWBG.filt)
+
+#################################
+
+# Learn errors 
+errF_BLWBG <- learnErrors(
+  filtFs_BLWBG, multithread = 6, 
+  randomize = T, verbose = 1, MAX_CONSIST = 20)
+errR_BLWBG <- learnErrors(
+  filtRs_BLWBG, multithread = 6, 
+  randomize = T, verbose = 1, MAX_CONSIST = 20)
+
+# Plot error profiles
+pdf("ErrorProfiles_BLWBG.pdf")
+plotErrors(errF_BLWBG, nominalQ = T)
+plotErrors(errR_BLWBG, nominalQ = T)
+dev.off()
+# convergence after 5-6 rounds - ok!
+# not many outliers outside the black line - ok here
+
+# Dereplication 
+derepFs_BLWBG <- derepFastq(filtFs_BLWBG, verbose = T)
+derepRs_BLWBG <- derepFastq(filtRs_BLWBG, verbose = T)
+
+# Name the derep-class objects by the sample names
+names(derepFs_BLWBG) <- sample.names
+names(derepRs_BLWBG) <- sample.names
+
+# Denoising
+dadaFs_BLWBG <- dada(
+  derepFs_BLWBG, err = errF_BLWBG, multithread = 6, pool = T)
+dadaRs_BLWBG <- dada(
+  derepRs_BLWBG, err = errR_BLWBG, multithread = 6, pool = T)
+
+#################################
+
+# Read merging
+mergers_BLWBG <- mergePairs(
+  dadaFs_BLWBG, 
+  derepFs_BLWBG, 
+  dadaRs_BLWBG,
+  derepRs_BLWBG,
+  minOverlap = 10,
+  verbose = TRUE,
+  propagateCol = c(
+    "birth_fold", "birth_ham"))
+
+# create sequence table
+seqtab_BLWBG <- makeSequenceTable(mergers_BLWBG)
+dim(seqtab_BLWBG) # identified 7660 sequences
+saveRDS(seqtab_BLWBG, 
+  "~/bacteria/BLWBG/seqtab_BLWBG.rds")
+
+#######################################################################
+
+## MiSeq run BLVR5 ##
+
+# setwd
+setwd("~/bacteria/BLVR5")
+
+# list files
+path <- "~/BLVR5/Clipped/"
+fns <- list.files(path)
+fns
+
+# ensure fwd/rev reads in same order
+fnFs_BLVR5 <- sort(list.files(path, pattern="_R1.fastq"))
+fnRs_BLVR5 <- sort(list.files(path, pattern="_R2.fastq"))
+
+# Define sample names
+sample.names <- sort(read.table(
+  "../sample_names.txt", 
+  h = F, stringsAsFactors = F)$V1)
+
+# Specify the full path to the fnFs and fnRs
+fnFs_BLVR5 <- file.path(path, fnFs_BLVR5)
+fnRs_BLVR5 <- file.path(path, fnRs_BLVR5)
+
+#################################
+
+# Quality check
+QualityProfileFs_BLVR5 <- list()
+for(i in 1:length(fnFs_BLVR5)) {
+  QualityProfileFs_BLVR5[[i]] <- list()
+  QualityProfileFs_BLVR5[[i]][[1]] <- plotQualityProfile(
+    fnFs_BLVR5[i])}
+pdf("QualityProfileForward_BLVR5.pdf")
+for(i in 1:length(fnFs_BLVR5)) {do.call("grid.arrange", 
+   QualityProfileFs_BLVR5[[i]])}
+dev.off()
+rm(QualityProfileFs_BLVR5)
+
+QualityProfileRs_BLVR5 <- list()
+for(i in 1:length(fnRs_BLVR5)) {
+  QualityProfileRs_BLVR5[[i]] <- list()
+  QualityProfileRs_BLVR5[[i]][[1]] <- plotQualityProfile(
+    fnRs_BLVR5[i])}
+pdf("QualityProfileReverse_BLVR5.pdf")
+for(i in 1:length(fnRs_BLVR5)) {do.call("grid.arrange", 
+   QualityProfileRs_BLVR5[[i]])}
+dev.off()
+rm(QualityProfileRs_BLVR5)
+
+# Make directory and filenames for the filtered fastqs
+filt_path_BLVR5 <- file.path(path, "../Filtered")
+if(!file_test("-d", filt_path_BLVR5)) dir.create(filt_path_BLVR5)
+filtFs_BLVR5 <- file.path(
+  filt_path_BLVR5, paste0(sample.names, "_F_filt.fastq"))
+filtRs_BLVR5 <- file.path(
+  filt_path_BLVR5, paste0(sample.names, "_R_filt.fastq"))
+
+#################################
+
+# Filter
+out_BLVR5 <- filterAndTrim(
+  fnFs_BLVR5, 
+  filtFs_BLVR5, 
+  fnRs_BLVR5, 
+  filtRs_BLVR5,
+  truncLen = c(230, 195),
+  maxN = 0,
+  minQ = 2,
+  maxEE = c(3, 3), 
+  truncQ = 0, 
+  rm.phix = TRUE,
+  compress = F,
+  multithread = 6)
+head(out_BLVR5)
+summary(out_BLVR5[, 2]/out_BLVR5[, 1])
+# should be retaining >70% (0.7) OK here!
+
+# Quality check 
+QualityProfileFs_BLVR5.filt <- list()
+for(i in 1:length(filtFs_BLVR5)) {
+  QualityProfileFs_BLVR5.filt[[i]] <- list()
+  QualityProfileFs_BLVR5.filt[[i]][[1]] <- plotQualityProfile(
+    filtFs_BLVR5[i])}
+pdf("QualityProfileForwardFiltered_BLVR5.pdf")
+for(i in 1:length(filtFs_BLVR5)) {do.call("grid.arrange", 
+  QualityProfileFs_BLVR5.filt[[i]])}
+dev.off()
+rm(QualityProfileFs_BLVR5.filt)
+
+QualityProfileRs_BLVR5.filt <- list()
+for(i in 1:length(filtRs_BLVR5)) {
+  QualityProfileRs_BLVR5.filt[[i]] <- list()
+  QualityProfileRs_BLVR5.filt[[i]][[1]] <- plotQualityProfile(
+    filtRs_BLVR5[i])}
+pdf("QualityProfileReverseFiltered_BLVR5.pdf")
+for(i in 1:length(filtRs_BLVR5)) {do.call("grid.arrange", 
+   QualityProfileRs_BLVR5.filt[[i]])}
+dev.off()
+rm(QualityProfileRs_BLVR5.filt)
+
+#################################
+
+# Learn errors 
+errF_BLVR5 <- learnErrors(
+  filtFs_BLVR5, multithread = 6, randomize = T, 
+  verbose = 1, MAX_CONSIST = 20)
+errR_BLVR5 <- learnErrors(
+  filtRs_BLVR5, multithread = 6, randomize = T, 
+  verbose = 1, MAX_CONSIST = 20)
+
+# Plot error profiles
+pdf("ErrorProfiles_BLVR5.pdf")
+plotErrors(errF_BLVR5, nominalQ = T)
+plotErrors(errR_BLVR5, nominalQ = T)
+dev.off()
+# looks ok
+
+# Dereplication 
+derepFs_BLVR5 <- derepFastq(filtFs_BLVR5, verbose = T)
+derepRs_BLVR5 <- derepFastq(filtRs_BLVR5, verbose = T)
+
+# Name the derep-class objects by the sample names
+names(derepFs_BLVR5) <- sample.names
+names(derepRs_BLVR5) <- sample.names
+
+# Denoising
+dadaFs_BLVR5 <- dada(
+  derepFs_BLVR5, err = errF_BLVR5, multithread = 6, pool = T)
+dadaRs_BLVR5 <- dada(
+  derepRs_BLVR5, err = errR_BLVR5, multithread = 6, pool = T)
+
+#################################
+
+# Read merging
+mergers_BLVR5 <- mergePairs(
+  dadaFs_BLVR5, 
+  derepFs_BLVR5, 
+  dadaRs_BLVR5,
+  derepRs_BLVR5,
+  minOverlap = 10,
+  verbose = TRUE,
+  propagateCol = c(
+    "birth_fold","birth_ham"))
+
+# create sequence table
+seqtab_BLVR5 <- makeSequenceTable(mergers_BLVR5)
+dim(seqtab_BLVR5) # identified 12444 sequences
+saveRDS(seqtab_BLVR5, 
+    "~/BLVR5/seqtab_BLVR5.rds")
+
+
+#######################################################################
+   ## MERGE RUNS; QC ##
+#######################################################################
+
+setwd("~/bacteria")
+
+st1 <- readRDS(
+  "/BLWBG/seqtab_BLWBG.rds")
+st2 <- readRDS(
+  "/BLVR5/seqtab_BLVR5.rds")
+
+seqtab <- mergeSequenceTables(
+  st1, st2, repeats="sum")
+
+saveRDS(seqtab, 
+  "seqtab_bac1617.rds")
+
+# Remove chimeras 
+# Identified 5175 bimeras out of 14205 input sequences.
+seqtab.nochim <- removeBimeraDenovo(
+  seqtab, method = "consensus", multithread = 6, verbose = T)
+
+# Quality checks
+dim(seqtab.nochim)  #9030
+summary(rowSums(seqtab.nochim)/rowSums(seqtab))
+
+# Determine read lengths/size range of amplicons
+table(rep(nchar(colnames(seqtab.nochim)), colSums(seqtab.nochim)))
+
+# Remove singletons & junk -- "c" adjusted to amplicon sizerange
+seqtab.nochim2 <- seqtab.nochim[, 
+    nchar(colnames(seqtab.nochim)) %in% c(365:385) & 
+    colSums(seqtab.nochim) > 1]
+dim(seqtab.nochim2) # 6899
+summary(rowSums(seqtab.nochim2)/rowSums(seqtab.nochim))
+summary(rowSums(seqtab.nochim2))
+
+#################################
+
+## Summary stats ##
+
+# nSeqs BLWBG
+getN_BLWBG <- function(x) sum(getUniques(x))
+track_BLWBG <- cbind(out_BLWBG, sapply(
+  dadaFs_BLWBG, getN_BLWBG), sapply(mergers_BLWBG, getN_BLWBG), 
+  rowSums(seqtab.nochim), rowSums(seqtab.nochim2))
+colnames(track_BLWBG) <- c(
+  "input","filtered","denoised","merged","nochim","tabled")
+rownames(track_BLWBG) <- sample.names
+track_BLWBG <- data.frame(track_BLWBG)
+head(track_BLWBG)
+
+# nSeqs BLVR5
+getN_BLVR5 <- function(x) sum(getUniques(x))
+track_BLVR5 <- cbind(out_BLVR5, sapply(
+  dadaFs_BLVR5, getN_BLVR5), sapply(mergers_BLVR5, getN_BLVR5), 
+  rowSums(seqtab.nochim), rowSums(seqtab.nochim2))
+colnames(track_BLVR5) <- c(
+  "input","filtered","denoised","merged","nochim","tabled")
+rownames(track_BLVR5) <- sample.names
+track_BLVR5 <- data.frame(track_BLVR5)
+head(track_BLVR5)
+
+#######################################################################
+   ## TAXONOMY ##
+#######################################################################
+
+# tested with dada-formatted Silva v132 & v138
+# download from https://zenodo.org/record/1172783 (v132)
+# https://zenodo.org/record/3731176 (v138)
+# for paper; use v138 results
+# place databases into working directory
+
+tax_v138 <- assignTaxonomy(
+  seqtab.nochim2, 
+  "silva_nr_v138_train_set.fa.gz", 
+  tryRC = TRUE,
+  multithread = 10)
+
+# Bacteria 6718 - Archaea 164 - Eukaryota 7 
+summary(tax_v138)
+
+#################################
+
+## Format and export ##
+
+# Select BAC+ARCH; remove NAs on phylum level 
+# remove chloroplasts & mitochondria
+table(tax_v138[, 1])   
+sum(is.na(tax_v138[, 2]))   # 141
+tax.good <- tax_v138[!is.na(tax_v138[, 2]) & tax_v138[, 1] %in% c("Bacteria","Archaea"),]
+tax.good <- tax.good[-c(grep(
+  "Chloroplast", tax.good[, 4]), grep(
+  "Mitochondria", tax.good[, 5])), ]
+seqtab.nochim2.good <- seqtab.nochim2[, rownames(tax.good)]
+summary(rowSums(seqtab.nochim2.good))
+
+# Format tables
+seqtab.nochim2.print <- t(seqtab.nochim2.good)
+tax.print <- tax.good
+all.equal(rownames(seqtab.nochim2.print), 
+  rownames(tax.print)) #TRUE
+rownames(seqtab.nochim2.print) <- paste(
+  "sq", 1:ncol(seqtab.nochim2.good), sep = "")
+rownames(tax.print) <- rownames(seqtab.nochim2.print)
+
+# Export
+write.table(seqtab.nochim2.print, 
+   "bac_seqtab.txt", sep = "\t", quote=F)
+write.table(tax.print, 
+   "bac_tax.txt", sep = "\t", quote=F)
+uniquesToFasta(seqtab.nochim2.good, 
+   "bac_uniques.txt")
+write.table(track_BLVR5, 
+   "dadastats_BLVR5.txt", sep = "\t", quote=F)
+write.table(track_BLWBG, 
+   "dadastats_BLWBG.txt", sep = "\t", quote=F)
+
+#################################
+
+save.image("RAS1617_dada_bac.Rdata")
+
+```
+
+Analysis is continued via the Rcripts in https://github.com/matthiaswietz/RAS-1617/tree/main/analysisCode.

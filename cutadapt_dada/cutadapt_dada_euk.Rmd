@@ -1,0 +1,338 @@
+---
+title: "FRAM Observatory -- RAS 2016-17 -- Eukaryotic Seasonality"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This markdown describes the processing of bacterial+archaeal amplicon sequences from an  annual cycle in the Arctic Ocean. Samples were collected between July 2016 and July 2017 using Remote Access Samplers in the framework of the FRAM LTER in Fram Strait (https://www.awi.de/en/expedition/observatories/ocean-fram.html). Raw fastq files are available under ENA accession PRJEB43504. Table S1 shows detailed accession information for fastqs, and their metadata.
+
+First we remove primers using *Cutadapt*  
+
+```{console}
+
+#######################################################################
+## FILE PREPARATION ##
+#######################################################################
+
+# This workflow ran on the *aphros* server of the AWI
+# For your own system, primer clipping needs to be adjusted
+
+FILELOCATION="~/eukaryotes"
+NSAMPLE="96" #number of samples
+module load anaconda2 java 
+
+cd ~/eukaryotes
+mkdir Original
+mv *.fastq.gz ./Original/
+gunzip -f ./Original/*.gz
+
+#rename and copy original files to new file names
+mkdir Renamed
+ls -1v ./Original/*R1_001.fastq > ./Renamed/originalR1  #save original file names
+ls -1v ./Original/*R2_001.fastq > ./Renamed/originalR2
+
+new=1  
+for i in $(ls -1v ./Original/*R1_001.fastq)   
+do
+cp ${i} ./Renamed/${new}"_R1.fastq"
+((new++))
+done
+
+new=1
+for i in $(ls -1v ./Original/*R2_001.fastq)
+do
+cp ${i} ./Renamed/${new}"_R2.fastq"
+((new++))
+done  
+
+ls -1v ./Renamed/[0-9]*_R1.fastq > ./Renamed/renamedR1
+ls -1v ./Renamed/[0-9]*_R2.fastq > ./Renamed/renamedR2
+paste ./Renamed/originalR1 ./Renamed/renamedR1 > ./Renamed/fileID_R1
+paste ./Renamed/originalR2 ./Renamed/renamedR2 > ./Renamed/fileID_R2
+
+# Primer clipping 
+mkdir Logfiles
+mkdir Clipped
+CLIP_qsub="/clipping_aphros.sh"
+
+# Input primer sequences
+# eukaryotic primers 528iF and 964iR > amplicon length 430
+FBC=GCGGTAATTCCAGCTCCAA # forward primer
+RBC=ACTTTCGTTCTTGATYRR # reverse primer
+OFWD=18 #length FBC (19) - 1
+OREV=19 # length RBC (20) - 1
+ERROR=0.16 # allowed %mismatches with primer sequences
+
+qsub -d ${FILELOCATION} -t 1-${NSAMPLE} -o ${FILELOCATION}/Logfiles -e ${FILELOCATION}/Logfiles -v FBC=${FBC},RBC=${RBC},OFWD=${OFWD},OREV=${OREV},ERROR=${ERROR} ${CLIP_qsub}
+
+# Write to sample.names for dada
+cd ./Clipped
+ls -1 *_R1.fastq | sed 's/_R1\.fastq//' > ../sample_names.txt
+cd ..
+
+# cleaning up directories
+mkdir ./Clipped/Clipped_logs
+mv ./Clipped/*.log ./Clipped/Clipped_logs/
+mv ./Clipped/*.info ./Clipped/Clipped_logs/
+
+#######################################################################
+
+# start screen session
+screen -S dada
+
+# start R 
+module load R/3.5.2 
+R
+
+```
+
+*Now we go into DADA mode!*
+
+```{r, eval = F}
+
+require(dada2)
+require(ShortRead)
+require(ggplot2)
+require(gridExtra)
+
+##########################################
+
+# setwd and Rdata
+setwd("~/eukaryotes")
+
+# list files
+path <- "~/eukaryotes/Clipped/"
+fns <- list.files(path)
+fns
+
+# Ensure forward/reverse reads in same order
+fnFs <- sort(list.files(path, pattern="_R1.fastq"))
+fnRs <- sort(list.files(path, pattern="_R2.fastq"))
+
+# Define sample names
+sample.names <- sort(read.table(
+  "sample_names.txt", 
+  h = F, stringsAsFactors = F)$V1)
+sample.names
+
+# Specify the full path to the fnFs and fnRs
+fnFs <- file.path(path, fnFs)
+fnRs <- file.path(path, fnRs)
+
+#################################
+
+# Quality check
+QualityProfileFs <- list()
+for(i in 1:length(fnFs)) {QualityProfileFs[[i]] <- list()
+  QualityProfileFs[[i]][[1]] <- plotQualityProfile(fnFs[i])}
+pdf("QualityProfileForward.pdf")
+for(i in 1:length(fnFs)) {do.call("grid.arrange", 
+  QualityProfileFs[[i]])}
+dev.off()
+rm(QualityProfileFs)
+
+QualityProfileRs <- list()
+for(i in 1:length(fnRs)) {QualityProfileRs[[i]] <- list()
+  QualityProfileRs[[i]][[1]] <- plotQualityProfile(fnRs[i])}
+pdf("QualityProfileReverse.pdf")
+for(i in 1:length(fnRs)) {
+  do.call("grid.arrange", QualityProfileRs[[i]])}
+dev.off()
+rm(QualityProfileRs)
+
+# Make directory and filenames for the filtered fastqs
+filt_path <- file.path(path, "../Filtered")
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(
+  filt_path, paste0(sample.names, "_F_filt.fastq"))
+filtRs <- file.path(
+  filt_path, paste0(sample.names, "_R_filt.fastq"))
+
+#################################
+
+# Filter: depending on the expected overlap, filtering parameters can be stricter
+# calculate expected error rates: # sum(10^(-x/10))  #x: quality scores of each read
+# truncLen was lowered based on QualityProfile output (low quality esp of rev-reads)
+# 528iF and 964iR give amplicon of 430bp
+# suggested truncLen[[1]] + truncLen[[2]] > amplicon_length+25 (i.e. 460)
+# tested 250-195; retained 65% > rather poor quality, but chosen for sufficient overlap in merging
+
+out <- filterAndTrim(
+  fnFs, 
+  filtFs, 
+  fnRs, 
+  filtRs,
+  truncLen = c(250, 200),
+  maxN = 0,
+  minQ = 2,
+  maxEE = c(3, 3), 
+  truncQ = 0, 
+  rm.phix = TRUE,
+  compress = F,
+  multithread = 6)
+head(out)
+summary(out[, 2]/out[, 1])
+# should be retaining >70% (0.6) OK here!
+
+# Quality check 
+QualityProfileFs.filt <- list()
+for(i in 1:length(filtFs)) {QualityProfileFs.filt[[i]] <- list()
+  QualityProfileFs.filt[[i]][[1]] <- plotQualityProfile(filtFs[i])}
+pdf("QualityProfileForwardFiltered.pdf")
+for(i in 1:length(filtFs)) {do.call("grid.arrange", 
+   QualityProfileFs.filt[[i]])}
+dev.off()
+rm(QualityProfileFs.filt)
+
+QualityProfileRs.filt <- list()
+for(i in 1:length(filtRs)) {QualityProfileRs.filt[[i]] <- list()
+  QualityProfileRs.filt[[i]][[1]] <- plotQualityProfile(filtRs[i])}
+pdf("QualityProfileReverseFiltered.pdf")
+for(i in 1:length(filtRs)) {do.call("grid.arrange", 
+   QualityProfileRs.filt[[i]])}
+dev.off()
+rm(QualityProfileRs.filt)
+
+#################################
+
+# Learn errors 
+errF <- learnErrors(
+  filtFs, multithread=6, randomize=T, verbose=1, MAX_CONSIST=20)
+errR <- learnErrors(
+  filtRs, multithread=6, randomize=T, verbose=1, MAX_CONSIST=20)
+
+# Plot error profiles
+pdf("ErrorProfiles.pdf")
+plotErrors(errF, nominalQ = T)
+plotErrors(errR, nominalQ = T)
+dev.off()
+# convergence after 5-6 rounds: ok!
+# only few outliers outside black line - ok here
+
+# Dereplication 
+derepFs <- derepFastq(filtFs, verbose = T)
+derepRs <- derepFastq(filtRs, verbose = T)
+
+# Name the derep-class objects by the sample names
+names(derepFs) <- sample.names
+names(derepRs) <- sample.names
+
+# Denoising
+dadaFs <- dada(
+  derepFs, err = errF, multithread = 6, pool = T)
+dadaRs <- dada(
+  derepRs, err = errR, multithread = 6, pool = T)
+
+#################################
+
+# Read merging
+mergers <- mergePairs(
+  dadaFs, 
+  derepFs, 
+  dadaRs,
+  derepRs,
+  minOverlap = 20,
+  verbose = TRUE,
+  propagateCol = c(
+    "birth_fold","birth_ham"))  #ok: avg >90% merged
+
+# create sequence table
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab) # identified 27969 sequences
+saveRDS(seqtab, 
+  "~/eukaryotes/seqtab_euk1617.rds")
+
+# removing chimeras 
+# 13865 bimeras out of 27969 input sequences.     
+seqtab.nochim <- removeBimeraDenovo(
+  seqtab, method = "consensus", multithread = 6, verbose = T)
+
+# stats
+dim(seqtab.nochim)  # 14104 sequences
+summary(rowSums(seqtab.nochim)/rowSums(seqtab))
+
+# Determine read lengths/size range of amplicons
+table(rep(nchar(colnames(seqtab.nochim)), colSums(seqtab.nochim)))
+
+# Remove singletons/junk -- "c" adjusted to sizerange of amplicons
+seqtab.nochim2 <- seqtab.nochim[, nchar(
+  colnames(seqtab.nochim)) %in% c(326:400) & 
+  colSums(seqtab.nochim) > 1]
+
+# stats
+dim(seqtab.nochim2) # 8846 sequences
+summary(rowSums(seqtab.nochim2))
+summary(rowSums(seqtab.nochim2)/rowSums(seqtab.nochim))
+
+#################################
+
+# Summary nSeqs 
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), 
+               sapply(mergers, getN), 
+               rowSums(seqtab.nochim), 
+               rowSums(seqtab.nochim2))
+colnames(track) <- c(
+  "input","filtered","denoised","merged","nochim","tabled")
+rownames(track) <- sample.names
+track <- data.frame(track)
+head(track)
+
+#################################
+
+## TAXONOMY -- PR2 ##
+
+# downloaded from https://github.com/pr2database/
+# place database into working directory
+
+tax_pr2 <- assignTaxonomy(
+  seqtab.nochim2, 
+  "pr2_version_4.12.0_18S_dada2.fasta.gz", 
+  tryRC = TRUE,
+  multithread = 10)
+
+# Eukaryota 8846   
+summary(tax_pr2)
+
+# Remove NA on division level (= phylum) 
+table(tax_pr2[, 1])   
+sum(is.na(tax_pr2[, 3]))   #583
+tax.good <- tax_pr2[!is.na(tax_pr2[, 3]),]
+seqtab.nochim2.good <- seqtab.nochim2[, rownames(tax.good)]
+summary(rowSums(seqtab.nochim2.good))
+
+# Format tables
+seqtab.nochim2.print <- t(seqtab.nochim2.good)
+tax.print <- tax.good
+all.equal(rownames(seqtab.nochim2.print), 
+          rownames(tax.print)) #TRUE
+rownames(seqtab.nochim2.print) <- paste(
+  "sq", 1:ncol(seqtab.nochim2.good), sep = "")
+rownames(tax.print) <- rownames(seqtab.nochim2.print)
+
+# Rename cols 
+# acc. to PR2 taxranks; but with Division=Phylum
+# possible as underlying taxnames are consistent with Silva
+# e.g. Haptophyta: Silva-Phylum, PR2-Division
+# enables cross-compatibility with BAC data
+colnames(tax.print)<- c(
+  "Kingdom","Supergroup","Phylum","Class",
+  "Order","Family","Genus","Species")
+
+# Export
+write.table(seqtab.nochim2.print, 
+   "euk_seqtab.txt", sep = "\t", quote=F)
+write.table(tax.print, 
+   "euk_tax.txt", sep = "\t", quote=F)
+uniquesToFasta(seqtab.nochim2.good, 
+   "euk_uniques.fasta")
+
+#################################
+
+save.image("RAS1617_dada_euk.Rdata")
+
+```
+
+Analysis is continued via the Rcripts in https://github.com/matthiaswietz/RAS-1617/tree/main/analysisCode.
