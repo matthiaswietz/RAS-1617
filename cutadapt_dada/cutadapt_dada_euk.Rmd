@@ -1,5 +1,5 @@
 ---
-title: "FRAM Observatory -- RAS 2016-17 -- Eukaryotic Seasonality"
+title: "FRAM Observatory -- RAS 2016-17 -- Processing of 18S rRNA amplicon sequences"
 ---
 
 ```{r setup, include=FALSE}
