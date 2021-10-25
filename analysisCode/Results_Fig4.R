@@ -10,7 +10,7 @@ plot_top1 <- amp_heatmap(
   ampvis.euk, 
   tax_aggregate = "Family",
   tax_show = c(
-    "RAD-C_XX","Dino-II-7","Dino-I-1",
+    "RAD-C_uc","Dino-II-7","Dino-I-1",
     "Opalinopsidae","Pelagomonadaceae",
     "Coscinodiscophyceae","Raphid-pennate",
     "Suessiaceae","Tovelliaceae",
@@ -19,7 +19,7 @@ plot_top1 <- amp_heatmap(
     "Mamiellaceae","Araphid-pennate",
     "Phaeocystaceae","Mediophyceae"),
  order_y_by = c(
-   "RAD-C_XX","Dino-II-7","Dino-I-1",
+   "RAD-C_uc","Dino-II-7","Dino-I-1",
    "Opalinopsidae","Pelagomonadaceae",
    "Coscinodiscophyceae","Raphid-pennate",
    "Suessiaceae","Tovelliaceae",
@@ -54,7 +54,7 @@ plot_top2 <- amp_heatmap(
     "Colwelliaceae","Marinimicrobia_SAR406_uc",
     "Woeseiaceae","Pirellulaceae",
     "Nitrospinaceae","Arctic97B-4_uc",
-       "Nitrosopumilaceae","Gammaproteobacteria_uc",
+    "Nitrosopumilaceae","Gammaproteobacteria_uc",
     "Defluviicoccales_uc","Magnetospiraceae",
     "AEGEAN-169","Nitrincolaceae",
     "SAR116_clade","OCS116_clade",
