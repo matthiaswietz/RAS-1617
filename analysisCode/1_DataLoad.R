@@ -162,7 +162,7 @@ TAX.euk <- TAX.euk %>%
   mutate(across(everything(),~gsub("Chrysophyceae_Clade-","Chrysophyceae_", .))) %>%
   mutate(across(everything(),~gsub("Stephanoecidae_Group_","Stephanoecidae_", .))) %>%
   mutate(across(everything(),~gsub("Pirsonia_Clade_","Pirsonia_", .))) %>%
-  mutate(across(everything(),~gsub("_X|_XXX|_XXX","_uc", .))) 
+  mutate(across(everything(),~gsub("_X|_XX|_XXX","_uc", .))) 
 
 
 ############################################################################################
