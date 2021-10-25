@@ -98,9 +98,9 @@ theme(axis.ticks = element_blank(),
    ###  Suppl Fig. 2a ###
 ############################################################################################
 
-amp_ordinate(amp_subset_samples(
-  ampvis.bac, watermass!="NA"), 
-  filter_species = 1, type = "NMDS",
+amp_ordinate(ampvis.bac, 
+  filter_species = 0.1, 
+  type = "NMDS",
   transform = "hellinger", 
   distmeasure = "bray", 
   sample_color_by = "site", 
@@ -111,11 +111,30 @@ scale_fill_manual(values=col.env) +
 geom_point(aes(size=AW)) +
 scale_size(range = c(1, 5)) +
 theme_bw() +
-theme(legend.position = "right",
+theme(legend.position = "none",
       axis.text = element_blank(),
       axis.ticks = element_blank(),
       axis.title = element_text(size=9),
       panel.grid.minor = element_blank())
+
+amp_ordinate(ampvis.euk, 
+  filter_species = 0.1, 
+  type = "NMDS",
+  transform = "hellinger", 
+  distmeasure = "bray", 
+  sample_color_by = "site", 
+  sample_colorframe = T,
+  sample_label_size = 1.5) +
+  scale_colour_manual(values=col.env) +
+  scale_fill_manual(values=col.env) +
+  geom_point(aes(size=AW)) +
+  scale_size(range = c(1, 5)) +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_text(size=9),
+        panel.grid.minor = element_blank())
 
 
 ###################################################################################
