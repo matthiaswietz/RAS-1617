@@ -9,5 +9,5 @@ Needed input files:
 [18S ASV counts](../cutadapt_dada/euk_seqtab.txt)  
 [18S taxonomy](../cutadapt_dada/euk_tax.txt)  
 
-[Environmental data (hydrography, ice cover)](./metadata.txt)  
+[Environmental data (hydrography, ice cover etc)](./metadata.txt)  
 [stratification data](./stratification.txt)  
